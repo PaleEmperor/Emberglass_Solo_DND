@@ -23,7 +23,7 @@ export async function generateNarration(state: GameState, action: string, rolls:
         stream: false,
         format: "json",
         messages: buildDmPrompt(state, action, rolls),
-        options: { temperature: 0.75, num_ctx: 8192 }
+        options: { temperature: 0.55, top_p: 0.9, repeat_penalty: 1.12, num_ctx: 8192 }
       }),
       signal: AbortSignal.timeout(45000)
     });
@@ -40,11 +40,15 @@ function mockNarration(state: GameState, action: string, rolls: DiceRoll[]): Llm
   const roll = rolls[0];
   const result = roll ? (roll.success ? "The old place gives way by an inch." : "The old place takes its inch back.") : "The room seems to notice.";
   const cellar = state.locations.some((l) => l.name.toLowerCase().includes("cellar"));
+  const hasChalk = state.inventory.some((item) => item.name.toLowerCase() === "black cellar chalk");
+  const hasKnockSense = state.character.spells.some((ability) => ability.toLowerCase().startsWith("knock-sense"));
   return {
-    narration: `You set yourself to it: ${action}\n\n${result} Candlelight crawls along the wet grain of the floorboards. Beneath them, stone shifts with a patient scrape, and a breath of cold air climbs through the cracks smelling of rainwater, rust, and shut-away years.\n\nMara Vell does not interrupt. She only turns the cellar key once in her palm and watches the room the way sailors watch a black horizon.`,
+    narration: `You set yourself to it: ${action}\n\n${result} Candlelight crawls along the wet grain of the floorboards. Beneath them, stone shifts with a patient scrape, and a breath of cold air climbs through the cracks smelling of rainwater, rust, and shut-away years.\n\nMara Vell does not interrupt. She only turns the cellar key once in her palm and watches the room the way sailors watch a black horizon. There are three useful things within reach right now: the key, the fresh scrape under the cellar latch, and Mara's silence when the knocking finds the same rhythm as your pulse.`,
     stateChanges: {
-      addInventory: [],
+      addInventory: hasChalk ? [] : [{ name: "Black cellar chalk", quantity: 1, description: "A thumb-length stick of soot-dark chalk found near the cellar latch. It marks stone even when wet and may reveal older scratches if rubbed across them." }],
       removeInventory: [],
+      addAbilities: hasKnockSense ? [] : ["Knock-Sense: can recognize repeated hidden knocks, hollow spaces, and patient things tapping from the other side"],
+      removeAbilities: [],
       newQuests: [],
       questUpdates: [],
       npcs: [],

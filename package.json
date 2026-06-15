@@ -1,6 +1,7 @@
 {
   "name": "local-dnd-dm",
   "version": "0.1.0",
+  "description": "Local-first solo tabletop RPG companion with AI narration, persistent campaign state, and optional local image generation.",
   "private": true,
   "type": "module",
   "scripts": {

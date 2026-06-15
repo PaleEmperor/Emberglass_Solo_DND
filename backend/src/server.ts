@@ -13,7 +13,7 @@ ensureSeedData();
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "5mb" }));
 app.use("/artwork", express.static(path.resolve("data", "artwork")));
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
@@ -98,10 +98,11 @@ app.delete("/api/campaigns/:id", (req, res) => {
 });
 
 const CharacterSchema = z.object({
-  name: z.string().min(1).max(80),
-  role: z.string().min(1).max(80),
-  ancestry: z.string().min(1).max(80),
-  background: z.string().min(1).max(500),
+  name: z.string().min(1).max(200),
+  role: z.string().min(1).max(160),
+  ancestry: z.string().min(1).max(160),
+  background: z.string().min(1).max(4000),
+  appearance: z.string().max(4000).default(""),
   maxHp: z.number().int().min(1).max(40),
   hp: z.number().int().min(1).max(40),
   stats: z.object({
@@ -112,7 +113,7 @@ const CharacterSchema = z.object({
     wisdom: z.number().int().min(3).max(20),
     charisma: z.number().int().min(3).max(20)
   }),
-  spells: z.array(z.string().min(1).max(80)).max(10)
+  spells: z.array(z.string().min(1).max(160)).max(30)
 });
 
 function seedFromPrompt(input: { campaignName: string; tone: string; premise: string }, character: ReturnType<typeof createCharacter>): Partial<CampaignSeed> {
@@ -129,7 +130,21 @@ function seedFromPrompt(input: { campaignName: string; tone: string; premise: st
       ? "A sealed invitation, a dead courier, and a locked balcony door have all named the same hour."
       : wild
         ? "Something old has shifted under root and stone, driving animals silent and travelers off the road."
-        : "A quiet place has begun keeping a secret too large for its walls.";
+      : "A quiet place has begun keeping a secret too large for its walls.";
+  const immediateDetails = sea
+    ? ["a chart corner pinned under a wet knife", "a bell note rolling under the dock planks", "a deckhand pretending not to watch you"]
+    : city
+      ? ["a wax seal split by a thumbnail", "a balcony door latched from the wrong side", "a servant with blood on one cuff and a rehearsed smile"]
+      : wild
+        ? ["fresh claw marks crossing old wagon ruts", "a crow nailed to a milepost with red thread", "a trail of warm ash where no fire burned"]
+        : ["a locked room no one admits owning", "a name scratched under the table edge", "a stranger leaving before their cup stops steaming"];
+  const choices = sea
+    ? "You can question the dockhand, inspect the chart, follow the bell note beneath the quay, or watch which ship is preparing to leave too quickly."
+    : city
+      ? "You can read the invitation, corner the servant, inspect the balcony door, or enter the room as if you were expected."
+      : wild
+        ? "You can study the tracks, cut down the crow and inspect the thread, question Old Renn, or follow the ash before rain takes it."
+        : "You can question your patron, examine the locked room, follow the stranger, or search the table and floor before anyone cleans the room.";
   return {
     name: input.campaignName,
     tone: input.tone,
@@ -149,7 +164,14 @@ function seedFromPrompt(input: { campaignName: string; tone: string; premise: st
     questDescription: hook,
     questProgress: "Learn what is true, who is lying, and why the matter has reached your hands tonight.",
     questReward: "Coin enough for the road, a dangerous favor, and first claim on whatever truth survives.",
-    openingMessage: `${start} holds its breath around you. ${npc} waits until the nearest listeners turn away, then slides the problem across the table as if it might bite. "${premise}"`,
+    questXpReward: sea || city || wild ? 150 : 100,
+    openingMessage: `${start} holds its breath around you. This is where the campaign begins: not in summary, but in the room, with ${character.name} close enough to touch the first piece of trouble.
+
+${npc} waits until the nearest listeners turn away, then slides the problem across the table as if it might bite. "${premise}"
+
+The place gives you three hard facts before anyone asks for bravery: ${immediateDetails[0]}, ${immediateDetails[1]}, and ${immediateDetails[2]}. ${npc.split(" ")[0]} sees which one catches your eye and says, "Choose carefully. The first step will tell them what kind of person came looking."
+
+${choices}`,
     memory: `Campaign premise: ${premise}`,
     startingItems: [
       { name: "Road-worn pack", quantity: 1, description: "Rations, flint, twine, chalk, a wrapped candle, and the small comforts that keep a bad night survivable." },
@@ -161,9 +183,9 @@ function seedFromPrompt(input: { campaignName: string; tone: string; premise: st
 app.post("/api/campaigns", (req, res) => {
   try {
     const body = z.object({
-      campaignName: z.string().min(1).max(120),
-      tone: z.string().min(1).max(200),
-      premise: z.string().min(1).max(1000).optional(),
+      campaignName: z.string().min(1).max(200),
+      tone: z.string().min(1).max(1500),
+      premise: z.string().min(1).max(8000).optional(),
       character: CharacterSchema
     }).parse(req.body);
     const character = createCharacter(body.character);
@@ -178,9 +200,12 @@ app.post("/api/campaigns", (req, res) => {
 app.post("/api/campaigns/:id/art", async (req, res) => {
   try {
     const body = z.object({
-      kind: z.enum(["portrait", "scene"]),
-      title: z.string().min(1).max(120).optional(),
-      prompt: z.string().min(1).max(2000).optional()
+      kind: z.enum(["portrait", "scene", "item", "npc", "location"]),
+      itemId: z.string().max(120).optional(),
+      title: z.string().min(1).max(200).optional(),
+      prompt: z.string().min(1).max(6000).optional(),
+      subjectName: z.string().min(1).max(200).optional(),
+      subjectDescription: z.string().min(1).max(3000).optional()
     }).parse(req.body);
     const state = getGameState(req.params.id);
     const artwork = await createArtwork(req.params.id, state, body);
@@ -192,7 +217,7 @@ app.post("/api/campaigns/:id/art", async (req, res) => {
 
 app.post("/api/campaigns/:id/action", async (req, res) => {
   try {
-    const body = z.object({ action: z.string().min(1).max(1000) }).parse(req.body);
+    const body = z.object({ action: z.string().min(1).max(4000) }).parse(req.body);
     res.json(await handleAdventureAction(req.params.id, body.action));
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "Invalid action" });
@@ -222,7 +247,7 @@ app.post("/api/campaigns/:id/hp", (req, res) => {
 
 app.post("/api/campaigns/:id/memory", (req, res) => {
   try {
-    const body = z.object({ content: z.string().min(1).max(500), importance: z.number().int().min(1).max(5).default(3) }).parse(req.body);
+    const body = z.object({ content: z.string().min(1).max(3000), importance: z.number().int().min(1).max(5).default(3) }).parse(req.body);
     addMemory(req.params.id, body.content, body.importance);
     res.json(getGameState(req.params.id));
   } catch (error) {
@@ -234,8 +259,8 @@ app.post("/api/campaigns/:id/world-facts", (req, res) => {
   try {
     const body = z.object({
       category: z.enum(["law", "lore", "faction", "danger", "tone", "custom"]),
-      title: z.string().min(1).max(120),
-      content: z.string().min(1).max(1000),
+      title: z.string().min(1).max(200),
+      content: z.string().min(1).max(4000),
       priority: z.number().int().min(1).max(5).default(4)
     }).parse(req.body);
     getGameState(req.params.id);
@@ -259,10 +284,10 @@ app.delete("/api/campaigns/:id/world-facts/:factId", (req, res) => {
 app.post("/api/campaigns/:id/npcs", (req, res) => {
   try {
     const body = z.object({
-      name: z.string().min(1).max(120),
-      disposition: z.string().min(1).max(120),
-      notes: z.string().min(1).max(1000),
-      location: z.string().max(120).optional()
+      name: z.string().min(1).max(200),
+      disposition: z.string().min(1).max(240),
+      notes: z.string().min(1).max(4000),
+      location: z.string().max(200).optional()
     }).parse(req.body);
     getGameState(req.params.id);
     addNpc(req.params.id, body.name, body.disposition, body.notes, body.location?.trim() || undefined);
@@ -275,8 +300,8 @@ app.post("/api/campaigns/:id/npcs", (req, res) => {
 app.post("/api/campaigns/:id/locations", (req, res) => {
   try {
     const body = z.object({
-      name: z.string().min(1).max(120),
-      description: z.string().min(1).max(1000),
+      name: z.string().min(1).max(200),
+      description: z.string().min(1).max(4000),
       discovered: z.boolean().default(true)
     }).parse(req.body);
     getGameState(req.params.id);
@@ -289,7 +314,7 @@ app.post("/api/campaigns/:id/locations", (req, res) => {
 
 app.post("/api/tools/roll", (req, res) => {
   try {
-    const body = z.object({ notation: z.string().min(2).max(20), reason: z.string().max(120).default("Cast by hand") }).parse(req.body);
+    const body = z.object({ notation: z.string().min(2).max(40), reason: z.string().max(240).default("Cast by hand") }).parse(req.body);
     res.json(rollNotation(body.notation, body.reason));
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "Could not roll dice" });

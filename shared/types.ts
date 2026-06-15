@@ -6,7 +6,9 @@ export type Character = {
   role: string;
   ancestry: string;
   background: string;
+  appearance: string;
   level: number;
+  xp: number;
   maxHp: number;
   hp: number;
   stats: Record<AbilityKey, number>;
@@ -50,6 +52,7 @@ export type Quest = {
   description: string;
   progress: string;
   reward: string;
+  xpReward: number;
 };
 
 export type Npc = {
@@ -93,7 +96,8 @@ export type Artwork = {
   id: string;
   campaignId: string;
   characterId?: string;
-  kind: "portrait" | "scene";
+  itemId?: string;
+  kind: "portrait" | "scene" | "item" | "npc" | "location";
   title: string;
   prompt: string;
   imageUrl: string;

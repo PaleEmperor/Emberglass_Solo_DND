@@ -1,38 +1,16 @@
 # Emberglass Local Solo DM
 
-A local-first solo DnD / AI Dungeon style MVP. The app uses a React frontend, an Express backend, SQLite persistence, deterministic dice/state handling, and an Ollama narrator when available. If Ollama is not running, it falls back to a built-in mock narrator so the game still works.
+Emberglass is a local-first solo tabletop RPG companion. It combines a React interface, an Express backend, SQLite persistence, deterministic dice/state handling, optional local LLM narration through Ollama, and optional local image generation through a Stable Diffusion WebUI-compatible API.
 
-## Prerequisites
+The app is intended for private local play. It does not require accounts, hosted services, or online deployment.
 
-- Node.js 20+.
-- Optional: [Ollama](https://ollama.com/) for local LLM narration.
-
-PowerShell on Windows may block `npm.ps1`. Use `npm.cmd` if that happens.
-
-## One-Click Start
-
-Use the desktop shortcut:
-
-```text
-C:\Users\bjoer\OneDrive\Desktop\Emberglass Local Solo DM.lnk
-```
-
-Or run this from the project folder:
+## Quick Start
 
 ```powershell
 .\Start-DND.cmd
 ```
 
-The launcher:
-
-- installs missing npm dependencies,
-- starts Ollama if available,
-- installs Ollama from the official installer if it is missing,
-- stores Ollama models in `E:\DND\ollama-models`,
-- downloads `llama3.2:3b` on first run,
-- starts the local image forge when present,
-- starts the backend and frontend,
-- opens the app in your browser.
+The launcher installs missing npm dependencies, starts the local backend and frontend, attempts to start Ollama when available, and opens the app in a browser.
 
 To stop the local app servers:
 
@@ -40,159 +18,108 @@ To stop the local app servers:
 .\Stop-DND.cmd
 ```
 
-## Manual Install
+## Manual Run
 
 ```powershell
 npm.cmd install
-```
-
-## Run
-
-```powershell
 npm.cmd run dev
 ```
 
-Open the frontend at:
+Frontend:
 
 ```text
 http://127.0.0.1:5173
 ```
 
-The backend runs at:
+Backend:
 
 ```text
 http://127.0.0.1:8787
 ```
 
-SQLite data is stored locally in:
+SQLite data is stored in `data/dnd.sqlite`. Generated artwork is stored in `data/artwork`.
 
-```text
-data/dnd.sqlite
-```
+## Optional Local Narration
 
-## Local LLM Setup
+When Ollama is running, Emberglass uses it as the narrator. If Ollama is not reachable or returns invalid JSON, the game falls back to a built-in local mock narrator so play can continue.
 
-The launcher already installed Ollama and downloaded `llama3.2:3b` on this machine. Manual setup is only needed if you want to change models yourself.
-
-```powershell
-ollama pull llama3.2:3b
-ollama serve
-```
-
-The backend defaults to:
+Defaults:
 
 ```text
 OLLAMA_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=llama3.2:3b
 ```
 
-You can choose another model:
+Useful commands:
+
+```powershell
+ollama pull llama3.2:3b
+ollama serve
+```
+
+You can choose another model before starting the backend:
 
 ```powershell
 $env:OLLAMA_MODEL="mistral:7b"
 npm.cmd run dev
 ```
 
-Recommended practical models:
+## Optional Local Image Generation
 
-- `llama3.2:3b`
-- `llama3.1:8b`
-- `mistral:7b`
-- `qwen2.5:7b`
-
-## Local Image Generation
-
-This machine is suitable for local image generation: Ryzen 9 5900X, 32 GB RAM, and RTX 4070 Ti SUPER with 16 GB VRAM.
-
-The app supports Stable Diffusion WebUI/Forge API at:
+Emberglass can call a Stable Diffusion WebUI/Forge API at:
 
 ```text
 http://127.0.0.1:7860
 ```
 
-Use:
+Use the included helper when you want to install/start the local image forge:
 
 ```powershell
 .\Start-ImageForge.cmd
 ```
 
-That script installs Stable Diffusion WebUI Forge under `E:\DND\image-forge`, downloads the SDXL base checkpoint, and starts the API server. This has already been done on this machine. The first run took a while because it downloaded the model, PyTorch, and Forge dependencies.
+If the image API is unavailable, the app creates local fallback artwork cards instead of blocking play.
 
-Generated artwork is saved locally under:
+## Features
 
-```text
-data/artwork
-```
-
-If the image forge is not ready, the app still creates local candle-card artwork so play is never blocked.
-
-## What Persists
-
-- Characters and stats.
-- Campaign summary.
-- Story messages.
-- Inventory.
-- Quests and quest progress.
-- NPCs.
-- Locations.
-- Important memories.
-- Character portraits and scene artwork.
+- Prompt-based campaign creation.
+- Character creation inside the chosen campaign.
+- Character portrait generation using appearance notes.
+- Natural-language player actions.
+- Automatic dice checks through the chat flow.
+- Persistent campaign state in SQLite.
+- DM-managed inventory, items, abilities, quests, XP, and levels.
+- Quest tracker with progress, rewards, completion state, and XP awards.
+- Searchable story log.
+- Searchable and grouped world bible for truths, NPCs, and places.
+- Manual additions for world truths, people, places, and memory notes.
+- Narrator insight view for current world assumptions and loose threads.
+- Item detail modal with optional item artwork.
+- Optional generated art for scenes, character portraits, NPCs, locations, and items.
+- JSON export and timestamped local backups.
 
 ## Architecture
 
-- `frontend/src`: React app with campaign selection, character creation, and adventure UI.
-- `backend/src/db.ts`: SQLite schema, migrations, persistence, and seed data helpers.
-- `backend/src/engine.ts`: deterministic game loop, dice checks, and validated state mutations.
+- `frontend/src`: React app with campaign selection, campaign creation, character creation, adventure UI, world bible, inventory, quest tracker, and art gallery.
+- `backend/src/db.ts`: SQLite schema, migrations, persistence, and seed helpers.
+- `backend/src/engine.ts`: deterministic game loop, dice checks, XP progression, and validated state mutations.
 - `backend/src/llm.ts`: Ollama integration with mock fallback.
-- `backend/src/prompt.ts`: structured DM prompt using recent conversation, state, memories, NPCs, locations, and quests.
+- `backend/src/prompt.ts`: structured DM prompt using recent conversation, state, memories, world truths, NPCs, locations, inventory, and quests.
 - `backend/src/schemas.ts`: Zod schemas for model-proposed state changes.
 - `backend/src/art.ts`: local image generation through Stable Diffusion WebUI/Forge, with saved fallback artwork.
 - `shared/types.ts`: shared TypeScript game types.
 
-The model writes narration and proposes structured state changes. The backend validates those proposals with schemas and applies them transactionally, so invalid JSON or implausible fields do not corrupt the database.
+The model writes narration and proposes structured state changes. The backend validates those proposals and applies them transactionally so malformed or implausible fields do not corrupt the database.
 
 ## Troubleshooting
 
-- If the UI shows `Mock fallback`, Ollama is not reachable or the model returned invalid JSON. The game still runs.
-- If the UI says the image forge is cold, scene and portrait buttons still create candle-card artwork. Start `Start-ImageForge.cmd` for SDXL paintings.
-- If PowerShell blocks npm, use `npm.cmd`.
-- If port `5173` is busy, Vite will print the alternate frontend URL.
-- If port `8787` is busy, run the backend with a different port:
+- If the UI shows mock/fallback narration, Ollama is not reachable or the model returned invalid JSON.
+- If the image forge is unavailable, artwork buttons still create local fallback cards.
+- If PowerShell blocks `npm`, use `npm.cmd`.
+- If port `5173` is busy, Vite prints an alternate frontend URL.
+- If port `8787` is busy, set a different backend port:
 
 ```powershell
 $env:PORT="8790"
 npm.cmd run dev
 ```
-
-## MVP Features
-
-- Prompt-based campaign creation followed by character creation inside that campaign.
-- Seed fantasy campaign.
-- Persistent SQLite state.
-- Natural language player actions.
-- Deterministic skill-check inference.
-- Visible d20 rolls.
-- Local LLM narration via Ollama.
-- Mock fallback when no local model is installed.
-- Structured state extraction and validation.
-- Dark fantasy tavern/parchment interface.
-- Character portraits during creation.
-- Scene art for key story moments and manual requests.
-
-## Quality Of Life Controls
-
-- Desktop shortcut for one-click play.
-- Campaign delete from the start screen.
-- Ollama status indicator.
-- Quick action chips during play.
-- Search box for the story log.
-- Manual dice tray with common dice and custom notation like `2d6+1`.
-- HP `-1`, `+1`, and full rest controls.
-- Local memory notes that are saved into persistent campaign memory.
-- Copy latest DM reply.
-- Refresh campaign state from disk.
-- Write timestamped JSON backups to `data/backups`.
-- Download the current campaign as JSON from the toolbar.
-- Paint or repaint the character portrait.
-- Paint the current story moment.
-- Browse recent painted scenes in the side panel.

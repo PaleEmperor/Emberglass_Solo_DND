@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Archive, BookOpen, Brush, ChevronDown, ChevronRight, Coins, Copy, Dices, Download, Heart, Image as ImageIcon, Map, MessageSquare, Package, RefreshCw, Save, ScrollText, Sparkles, Trash2, UserRound } from "lucide-react";
-import type { AbilityKey, AdventureResponse, DiceRoll, GameState, WorldFactCategory } from "../../shared/types";
+import { Archive, BookOpen, Brush, ChevronDown, ChevronRight, Coins, Copy, Dices, Download, Heart, Image as ImageIcon, Map, MessageSquare, Package, RefreshCw, Save, ScrollText, Sparkles, Trash2, UserRound, X } from "lucide-react";
+import type { AbilityKey, AdventureResponse, DiceRoll, GameState, InventoryItem, Location, Npc, Quest, WorldFactCategory } from "../../shared/types";
 import "./styles.css";
 
 type CampaignListItem = {
@@ -39,7 +39,7 @@ const api = {
   addNpc: (id: string, payload: { name: string; disposition: string; notes: string; location?: string }) => api.json<GameState>(`/api/campaigns/${id}/npcs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
   addLocation: (id: string, payload: { name: string; description: string; discovered: boolean }) => api.json<GameState>(`/api/campaigns/${id}/locations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
   backup: (id: string) => api.json<{ file: string }>(`/api/campaigns/${id}/backup`, { method: "POST" }),
-  art: (id: string, payload: { kind: "portrait" | "scene"; title?: string; prompt?: string }) => api.json<{ artwork: GameState["artworks"][number]; state: GameState }>(`/api/campaigns/${id}/art`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+  art: (id: string, payload: { kind: "portrait" | "scene" | "item" | "npc" | "location"; itemId?: string; title?: string; prompt?: string; subjectName?: string; subjectDescription?: string }) => api.json<{ artwork: GameState["artworks"][number]; state: GameState }>(`/api/campaigns/${id}/art`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
   roll: (notation: string, reason = "Cast by hand") => api.json<DiceRoll>("/api/tools/roll", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ notation, reason }) }),
   deleteCampaign: async (id: string) => {
     const res = await fetch(`/api/campaigns/${id}`, { method: "DELETE" });
@@ -56,20 +56,21 @@ const statLabels: Record<AbilityKey, string> = {
   charisma: "CHA"
 };
 
+const xpThresholds = [0, 300, 900, 2700, 6500, 14000, 23000, 34000, 48000, 64000, 85000, 100000, 120000, 140000, 165000, 195000, 225000, 265000, 305000, 355000];
+
+function xpProgress(level: number, xp: number) {
+  const current = xpThresholds[Math.max(0, Math.min(level - 1, xpThresholds.length - 1))] ?? 0;
+  const next = xpThresholds[Math.max(0, Math.min(level, xpThresholds.length - 1))] ?? current;
+  const span = Math.max(1, next - current);
+  return { current, next, percent: level >= 20 ? 100 : Math.max(0, Math.min(100, ((xp - current) / span) * 100)) };
+}
+
 const rolePresets = {
   Ranger: { hp: 12, stats: { strength: 12, dexterity: 16, constitution: 13, intelligence: 11, wisdom: 15, charisma: 10 }, spells: "Hunter's Mark, Cure Wounds" },
   Wizard: { hp: 8, stats: { strength: 8, dexterity: 13, constitution: 12, intelligence: 16, wisdom: 12, charisma: 11 }, spells: "Mage Hand, Shield, Burning Hands" },
   Fighter: { hp: 14, stats: { strength: 16, dexterity: 12, constitution: 15, intelligence: 10, wisdom: 11, charisma: 10 }, spells: "Second Wind, Action Surge" },
   Bard: { hp: 10, stats: { strength: 9, dexterity: 14, constitution: 12, intelligence: 12, wisdom: 10, charisma: 16 }, spells: "Vicious Mockery, Healing Word, Charm Person" }
 };
-
-const quickActions = [
-  "I let the room go quiet and look for what does not belong.",
-  "I ask which rumor makes honest folk lower their voices.",
-  "I move like a held breath and listen before touching the latch.",
-  "I study the dust, scratches, and old marks by candlelight.",
-  "I loosen my blade in its sheath and take the next careful step."
-];
 
 function App() {
   const [campaigns, setCampaigns] = useState<CampaignListItem[]>([]);
@@ -144,7 +145,7 @@ function StartScreen({ campaigns, status, imageStatus, onOpen, onCreate, onDelet
       <section className="intro-panel">
         <div className="sigil"><Sparkles size={34} /></div>
         <h1>The cellar door is waiting.</h1>
-        <p>Keep your blade close, your dice nearer, and your secrets written where the candlelight can find them.</p>
+        <p>Keep your blade close, your choices sharper, and your secrets written where the candlelight can find them.</p>
         <div className="hero-actions">
           {latest ? (
             <button className="primary wide" onClick={() => onOpen(latest.id)}>Return to {latest.name} <ChevronRight size={18} /></button>
@@ -187,7 +188,8 @@ function Creator({ onCreated }: { onCreated: (state: GameState) => void }) {
     premise: "A drowned bell rings under the harbor each midnight, and every ship that hears it returns with one crew member missing.",
     name: "Seren Ashvale",
     ancestry: "Human",
-    background: "Once carried sealed letters through bad weather and worse company. Knows which roads are old, which doors are watched, and how long a debt can follow footsteps."
+    background: "Once carried sealed letters through bad weather and worse company. Knows which roads are old, which doors are watched, and how long a debt can follow footsteps.",
+    appearance: "Lean road-worn traveler with sharp grey eyes, rain-dark hair tied back, a patched green cloak, weathered leather armor, and an old courier satchel."
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -206,6 +208,7 @@ function Creator({ onCreated }: { onCreated: (state: GameState) => void }) {
           role,
           ancestry: form.ancestry,
           background: form.background,
+          appearance: form.appearance,
           maxHp: preset.hp,
           hp: preset.hp,
           stats: preset.stats,
@@ -258,6 +261,7 @@ function Creator({ onCreated }: { onCreated: (state: GameState) => void }) {
               <label>Ancestry<input value={form.ancestry} onChange={(e) => setForm({ ...form, ancestry: e.target.value })} /></label>
             </div>
             <label>Background<textarea value={form.background} onChange={(e) => setForm({ ...form, background: e.target.value })} /></label>
+            <label>Appearance for portrait generation<textarea value={form.appearance} onChange={(e) => setForm({ ...form, appearance: e.target.value })} placeholder="Face, hair, build, age, clothing, armor, colors, scars, symbols, weapons, mood, and anything the portrait must get right." /></label>
             <div className="roles">
               {(Object.keys(rolePresets) as Array<keyof typeof rolePresets>).map((name) => (
                 <button type="button" className={role === name ? "role active" : "role"} onClick={() => setRole(name)} key={name}>{name}</button>
@@ -281,15 +285,15 @@ function Adventure({ initialState, initialStatus, onBack }: { initialState: Game
   const [action, setAction] = useState("");
   const [busy, setBusy] = useState(false);
   const [lastRolls, setLastRolls] = useState<AdventureResponse["rolls"]>([]);
-  const [manualRoll, setManualRoll] = useState<DiceRoll | null>(null);
   const [mode, setMode] = useState<"ollama" | "mock">(initialStatus?.available ? "ollama" : "mock");
   const [note, setNote] = useState("");
-  const [dice, setDice] = useState("d20");
   const [search, setSearch] = useState("");
   const [toast, setToast] = useState("");
   const [painting, setPainting] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [toolsOpen, setToolsOpen] = useState(false);
-  const [worldTab, setWorldTab] = useState<"insight" | "truth" | "person" | "place">("insight");
+  const [rightTab, setRightTab] = useState<"quests" | "world" | "notes" | "art">("world");
+  const [worldTab, setWorldTab] = useState<"overview" | "insight" | "truth" | "person" | "place">("overview");
   const [insight, setInsight] = useState<NarratorInsight | null>(null);
   const [factForm, setFactForm] = useState<{ category: WorldFactCategory; title: string; content: string; priority: number }>({ category: "law", title: "", content: "", priority: 5 });
   const [npcForm, setNpcForm] = useState({ name: "", disposition: "useful but guarded", notes: "", location: "" });
@@ -330,10 +334,6 @@ function Adventure({ initialState, initialStatus, onBack }: { initialState: Game
     } finally {
       setBusy(false);
     }
-  }
-
-  function continueScene() {
-    setAction("I take a breath, study the room, and wait for what changes first.");
   }
 
   async function refresh() {
@@ -393,20 +393,6 @@ function Adventure({ initialState, initialStatus, onBack }: { initialState: Game
     setToast("A new place is on the map.");
   }
 
-  async function rollDice(notation = dice) {
-    const result = await api.roll(notation, "Cast by hand");
-    setManualRoll(result);
-  }
-
-  async function changeHp(delta: number) {
-    setState(await api.setHp(state.campaign.id, state.character.hp + delta));
-  }
-
-  async function fullRest() {
-    setState(await api.rest(state.campaign.id));
-    setToast("The fire burns low. Wounds close enough for now.");
-  }
-
   async function paint(kind: "portrait" | "scene", title?: string) {
     if (painting) return;
     setPainting(true);
@@ -422,21 +408,73 @@ function Adventure({ initialState, initialStatus, onBack }: { initialState: Game
     }
   }
 
+  async function paintItem(item: InventoryItem) {
+    if (painting) return;
+    setPainting(true);
+    setToast(`Paint is gathering around ${item.name}...`);
+    try {
+      const result = await api.art(state.campaign.id, { kind: "item", itemId: item.id, title: item.name });
+      setState(result.state);
+      setToast(result.artwork.source === "sd-webui" ? "The item painting is dry." : "A candle-card was inked while the image forge sleeps.");
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "The paint would not settle.");
+    } finally {
+      setPainting(false);
+    }
+  }
+
+  async function paintNpc(npc: Npc) {
+    if (painting) return;
+    setPainting(true);
+    setToast(`Paint is gathering around ${npc.name}...`);
+    try {
+      const result = await api.art(state.campaign.id, {
+        kind: "npc",
+        title: npc.name,
+        subjectName: npc.name,
+        subjectDescription: `${npc.disposition}. ${npc.notes}${npc.location ? ` Location: ${npc.location}.` : ""}`
+      });
+      setState(result.state);
+      setToast(result.artwork.source === "sd-webui" ? "The face is on the page." : "A candle-card was inked while the image forge sleeps.");
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "The paint would not settle.");
+    } finally {
+      setPainting(false);
+    }
+  }
+
+  async function paintLocation(location: Location) {
+    if (painting) return;
+    setPainting(true);
+    setToast(`Paint is gathering around ${location.name}...`);
+    try {
+      const result = await api.art(state.campaign.id, {
+        kind: "location",
+        title: location.name,
+        subjectName: location.name,
+        subjectDescription: location.description
+      });
+      setState(result.state);
+      setToast(result.artwork.source === "sd-webui" ? "The place is on the page." : "A candle-card was inked while the image forge sleeps.");
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "The paint would not settle.");
+    } finally {
+      setPainting(false);
+    }
+  }
+
   const exportUrl = `/api/campaigns/${state.campaign.id}/export`;
   const latestDm = [...state.messages].reverse().find((m) => m.role === "dm");
   const portrait = state.artworks.find((art) => art.kind === "portrait" && art.characterId === state.character.id);
-  const scenes = state.artworks.filter((art) => art.kind === "scene");
+  const gallery = state.artworks.filter((art) => art.kind === "scene" || art.kind === "npc" || art.kind === "location");
+  const selectedItemArt = selectedItem ? state.artworks.find((art) => art.kind === "item" && art.itemId === selectedItem.id) : undefined;
 
   return (
     <main className="adventure">
       <aside className="left-rail">
         <button className="ghost" onClick={onBack}>Back</button>
-        <CharacterPanel state={state} portrait={portrait?.imageUrl} painting={painting} onHp={changeHp} onRest={fullRest} onPortrait={() => paint("portrait", state.character.name)} />
-        <Panel title="Pack" icon={<Package size={17} />}>
-          {state.inventory.length === 0 && <p className="muted">Your hands are empty but for nerve.</p>}
-          {state.inventory.map((item) => <div className="list-line" title={item.description} key={item.id}><strong>{item.name}</strong><span>x{item.quantity}</span></div>)}
-        </Panel>
-        <DiceTray dice={dice} setDice={setDice} rollDice={rollDice} manualRoll={manualRoll} />
+        <CharacterPanel state={state} portrait={portrait?.imageUrl} painting={painting} onPortrait={() => paint("portrait", state.character.name)} />
+        <PackPanel inventory={state.inventory} onSelect={setSelectedItem} />
       </aside>
       <section className="story-column">
         <div className="story-header">
@@ -458,19 +496,14 @@ function Adventure({ initialState, initialStatus, onBack }: { initialState: Game
             )}
           </div>
         </div>
-        {(lastRolls.length > 0 || manualRoll) && (
+        {lastRolls.length > 0 && (
           <div className="roll-strip">
             {lastRolls.map((roll) => <span key={roll.reason}><Dices size={16} /> {roll.total} vs DC {roll.dc} {roll.success ? "success" : "failure"}</span>)}
-            {manualRoll && <span><Dices size={16} /> {manualRoll.notation}: {manualRoll.total} ({manualRoll.rolls.join(", ")}{manualRoll.modifier ? ` ${manualRoll.modifier >= 0 ? "+" : ""}${manualRoll.modifier}` : ""})</span>}
           </div>
         )}
         <div className="search-row">
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Find a line in the ledger..." />
           {toast && <span>{toast}</span>}
-        </div>
-        <div className="quick-actions">
-          <button onClick={continueScene}>Let the room breathe.</button>
-          {quickActions.map((text) => <button key={text} onClick={() => setAction(text)}>{text}</button>)}
         </div>
         <div className="story-log" ref={logRef}>
           {visibleMessages.map((message) => (
@@ -486,47 +519,277 @@ function Adventure({ initialState, initialStatus, onBack }: { initialState: Game
           <button className="primary" disabled={busy}>{busy ? "The room holds its breath..." : "Risk it"}</button>
         </form>
       </section>
-      <aside className="right-rail">
-        <Panel title="Oaths and debts" icon={<Coins size={17} />}>
-          {state.quests.length === 0 && <p className="muted">No one has put a promise in your hands.</p>}
-          {state.quests.map((quest) => <div className="quest" key={quest.id}><strong>{quest.title}</strong><span>{quest.status}</span><p>{quest.progress}</p>{quest.reward && <em>{quest.reward}</em>}</div>)}
-        </Panel>
-        <Panel title="Known roads" icon={<Map size={17} />}>
-          {state.locations.map((location) => <div className="world-line" key={location.id}><strong>{location.name}</strong><p>{location.description}</p></div>)}
-          {state.npcs.map((npc) => <div className="world-line" key={npc.id}><strong>{npc.name}</strong><p>{npc.disposition}: {npc.notes}</p></div>)}
-        </Panel>
-        <WorldBible
-          state={state}
-          tab={worldTab}
-          setTab={setWorldTab}
-          insight={insight}
-          loadInsight={loadInsight}
-          factForm={factForm}
-          setFactForm={setFactForm}
-          addFact={addFact}
-          removeFact={removeFact}
-          npcForm={npcForm}
-          setNpcForm={setNpcForm}
-          addPerson={addPerson}
-          placeForm={placeForm}
-          setPlaceForm={setPlaceForm}
-          addPlace={addPlace}
+      <CampaignSidePanel
+        state={state}
+        tab={rightTab}
+        setTab={setRightTab}
+        worldTab={worldTab}
+        setWorldTab={setWorldTab}
+        insight={insight}
+        loadInsight={loadInsight}
+        factForm={factForm}
+        setFactForm={setFactForm}
+        addFact={addFact}
+        removeFact={removeFact}
+        npcForm={npcForm}
+        setNpcForm={setNpcForm}
+        addPerson={addPerson}
+        placeForm={placeForm}
+        setPlaceForm={setPlaceForm}
+        addPlace={addPlace}
+        note={note}
+        setNote={setNote}
+        addNote={addNote}
+        gallery={gallery}
+        paintNpc={paintNpc}
+        paintLocation={paintLocation}
+        painting={painting}
+      />
+      {selectedItem && (
+        <ItemModal
+          item={selectedItem}
+          artwork={selectedItemArt}
+          painting={painting}
+          onClose={() => setSelectedItem(null)}
+          onPaint={() => paintItem(selectedItem)}
         />
-        <Panel title="Ledger scraps" icon={<Archive size={17} />}>
-          <div className="note-box">
-            <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Scratch a truth into the campaign ledger..." />
-            <button className="ghost" onClick={addNote}>Set the ink</button>
-          </div>
-          {state.memories.slice(0, 6).map((memory) => <p className="memory" key={memory.id}>{memory.content}</p>)}
-        </Panel>
-        <Panel title="Painted moments" icon={<ImageIcon size={17} />}>
-          {scenes.length === 0 && <p className="muted">No scene has taken pigment yet.</p>}
-          <div className="art-grid">
-            {scenes.slice(0, 6).map((art) => <button className="art-thumb" key={art.id} title={art.prompt} onClick={() => window.open(art.imageUrl, "_blank")}><img src={art.imageUrl} alt={art.title} /><span>{art.title}</span></button>)}
-          </div>
-        </Panel>
-      </aside>
+      )}
     </main>
+  );
+}
+
+function ItemModal({ item, artwork, painting, onClose, onPaint }: { item: InventoryItem; artwork?: GameState["artworks"][number]; painting: boolean; onClose: () => void; onPaint: () => void }) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <section className="item-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-head">
+          <div>
+            <span>Inventory</span>
+            <h3>{item.name}</h3>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Close"><X size={17} /></button>
+        </div>
+        <div className="item-modal-body">
+          <button className="item-art-frame" onClick={artwork ? () => window.open(artwork.imageUrl, "_blank") : onPaint} title={artwork ? "Open item image" : "Paint this item"}>
+            {artwork ? <img src={artwork.imageUrl} alt={artwork.title} /> : <span><Package size={34} />{painting ? "Paint gathering..." : "No image yet"}</span>}
+          </button>
+          <div className="item-details">
+            <div className="item-quantity">Carried: x{item.quantity}</div>
+            <p>{item.description || "No description has been written for this item yet."}</p>
+            <button className="ghost full" onClick={onPaint} disabled={painting}><Brush size={16} /> {artwork ? "Repaint this item" : "Paint this item"}</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function PackPanel({ inventory, onSelect }: { inventory: InventoryItem[]; onSelect: (item: InventoryItem) => void }) {
+  const [search, setSearch] = useState("");
+  const query = search.trim().toLowerCase();
+  const filtered = inventory.filter((item) => !query || `${item.name} ${item.description}`.toLowerCase().includes(query));
+  const grouped = groupItems(filtered);
+  return (
+    <Panel title="Pack" icon={<Package size={17} />}>
+      <input className="collection-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search pack..." />
+      {inventory.length === 0 && <p className="muted">Your hands are empty but for nerve.</p>}
+      {inventory.length > 0 && filtered.length === 0 && <p className="muted">Nothing in the pack matches that search.</p>}
+      <div className="pack-list">
+        {Object.entries(grouped).map(([group, items]) => (
+          <div className="collection-group" key={group}>
+            <div className="collection-group-title">{group}</div>
+            {items.map((item) => (
+              <button type="button" className="list-line item-button rich" title={item.description} aria-label={`Inspect ${item.name}`} key={item.id} onClick={() => onSelect(item)}>
+                <strong>{item.name}</strong>
+                <span>x{item.quantity}</span>
+                {item.description && <p>{item.description}</p>}
+              </button>
+            ))}
+          </div>
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
+function groupItems(items: InventoryItem[]) {
+  const groups: Record<string, InventoryItem[]> = {};
+  for (const item of items) {
+    const text = `${item.name} ${item.description}`.toLowerCase();
+    const group = /potion|ration|food|drink|oil|candle|chalk|tonic|salve/.test(text)
+      ? "Consumables"
+      : /dagger|blade|sword|bow|arrow|bolt|staff|wand|armor|shield/.test(text)
+        ? "Arms and armor"
+        : /letter|map|note|writ|pass|token|coin|seal|contract|key/.test(text)
+          ? "Clues and leverage"
+          : /tool|rope|flint|twine|pack|satchel|kit|hook/.test(text)
+            ? "Tools"
+            : "Other";
+    groups[group] = [...(groups[group] ?? []), item];
+  }
+  return groups;
+}
+
+function CampaignSidePanel({
+  state,
+  tab,
+  setTab,
+  worldTab,
+  setWorldTab,
+  insight,
+  loadInsight,
+  factForm,
+  setFactForm,
+  addFact,
+  removeFact,
+  npcForm,
+  setNpcForm,
+  addPerson,
+  placeForm,
+  setPlaceForm,
+  addPlace,
+  paintNpc,
+  paintLocation,
+  painting,
+  note,
+  setNote,
+  addNote,
+  gallery
+}: {
+  state: GameState;
+  tab: "quests" | "world" | "notes" | "art";
+  setTab: (tab: "quests" | "world" | "notes" | "art") => void;
+  worldTab: "overview" | "insight" | "truth" | "person" | "place";
+  setWorldTab: (tab: "overview" | "insight" | "truth" | "person" | "place") => void;
+  insight: NarratorInsight | null;
+  loadInsight: () => void;
+  factForm: { category: WorldFactCategory; title: string; content: string; priority: number };
+  setFactForm: (form: { category: WorldFactCategory; title: string; content: string; priority: number }) => void;
+  addFact: () => void;
+  removeFact: (factId: string) => void;
+  npcForm: { name: string; disposition: string; notes: string; location: string };
+  setNpcForm: (form: { name: string; disposition: string; notes: string; location: string }) => void;
+  addPerson: () => void;
+  placeForm: { name: string; description: string };
+  setPlaceForm: (form: { name: string; description: string }) => void;
+  addPlace: () => void;
+  paintNpc: (npc: Npc) => void;
+  paintLocation: (location: Location) => void;
+  painting: boolean;
+  note: string;
+  setNote: (note: string) => void;
+  addNote: () => void;
+  gallery: GameState["artworks"];
+}) {
+  const tabs: Array<[typeof tab, string, React.ReactNode]> = [
+    ["world", "World", <BookOpen size={17} />],
+    ["quests", "Oaths", <Coins size={17} />],
+    ["notes", "Notes", <Archive size={17} />],
+    ["art", "Art", <ImageIcon size={17} />]
+  ];
+
+  return (
+    <aside className="campaign-side">
+      <nav className="campaign-side-tabs">
+        {tabs.map(([key, label, icon]) => (
+          <button className={tab === key ? "active" : ""} key={key} onClick={() => setTab(key)} title={label}>
+            {icon}
+            <span>{label}</span>
+          </button>
+        ))}
+      </nav>
+      <section className="campaign-side-content">
+        {tab === "world" && (
+          <>
+            <div className="side-heading"><BookOpen size={18} /><strong>World bible</strong></div>
+            <WorldBible
+              state={state}
+              tab={worldTab}
+              setTab={setWorldTab}
+              insight={insight}
+              loadInsight={loadInsight}
+              factForm={factForm}
+              setFactForm={setFactForm}
+              addFact={addFact}
+              removeFact={removeFact}
+              npcForm={npcForm}
+              setNpcForm={setNpcForm}
+              addPerson={addPerson}
+              placeForm={placeForm}
+              setPlaceForm={setPlaceForm}
+              addPlace={addPlace}
+              paintNpc={paintNpc}
+              paintLocation={paintLocation}
+              painting={painting}
+            />
+          </>
+        )}
+
+        {tab === "quests" && (
+          <>
+            <div className="side-heading"><Coins size={18} /><strong>Quest tracker</strong></div>
+            <QuestTracker quests={state.quests} />
+          </>
+        )}
+
+        {tab === "notes" && (
+          <>
+            <div className="side-heading"><Archive size={18} /><strong>Ledger scraps</strong></div>
+            <div className="note-box">
+              <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Scratch a truth into the campaign ledger..." />
+              <button className="ghost" onClick={addNote}>Set the ink</button>
+            </div>
+            <div className="side-list">
+              {state.memories.map((memory) => <p className="memory" key={memory.id}>{memory.content}</p>)}
+            </div>
+          </>
+        )}
+
+        {tab === "art" && (
+          <>
+            <div className="side-heading"><ImageIcon size={18} /><strong>Painted pages</strong></div>
+            {gallery.length === 0 && <p className="muted">No scene, face, or place has taken pigment yet.</p>}
+            <div className="art-grid large">
+              {gallery.map((art) => <button className="art-thumb" key={art.id} title={art.prompt} onClick={() => window.open(art.imageUrl, "_blank")}><img src={art.imageUrl} alt={art.title} /><span>{art.title}</span></button>)}
+            </div>
+          </>
+        )}
+      </section>
+    </aside>
+  );
+}
+
+function QuestTracker({ quests }: { quests: Quest[] }) {
+  const [search, setSearch] = useState("");
+  const query = search.trim().toLowerCase();
+  const filtered = quests.filter((quest) => !query || `${quest.title} ${quest.status} ${quest.description} ${quest.progress} ${quest.reward}`.toLowerCase().includes(query));
+  const groups: Array<[string, Quest[]]> = [
+    ["Active", filtered.filter((quest) => quest.status === "active")],
+    ["Completed", filtered.filter((quest) => quest.status === "completed")],
+    ["Failed", filtered.filter((quest) => quest.status === "failed")]
+  ];
+  return (
+    <div className="quest-tracker">
+      <input className="collection-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search quests..." />
+      {quests.length === 0 && <p className="muted">No one has put a promise in your hands.</p>}
+      {quests.length > 0 && filtered.length === 0 && <p className="muted">No quest matches that search.</p>}
+      <div className="side-list">
+        {groups.map(([label, items]) => items.length > 0 && (
+          <div className="collection-group" key={label}>
+            <div className="collection-group-title">{label}</div>
+            {items.map((quest) => (
+              <div className="quest" key={quest.id}>
+                <strong>{quest.title}</strong>
+                <span>{quest.status} / {quest.xpReward} XP</span>
+                <p>{quest.progress}</p>
+                {quest.description && <small>{quest.description}</small>}
+                {quest.reward && <em>{quest.reward}</em>}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -545,11 +808,14 @@ function WorldBible({
   addPerson,
   placeForm,
   setPlaceForm,
-  addPlace
+  addPlace,
+  paintNpc,
+  paintLocation,
+  painting
 }: {
   state: GameState;
-  tab: "insight" | "truth" | "person" | "place";
-  setTab: (tab: "insight" | "truth" | "person" | "place") => void;
+  tab: "overview" | "insight" | "truth" | "person" | "place";
+  setTab: (tab: "overview" | "insight" | "truth" | "person" | "place") => void;
   insight: NarratorInsight | null;
   loadInsight: () => void;
   factForm: { category: WorldFactCategory; title: string; content: string; priority: number };
@@ -562,76 +828,140 @@ function WorldBible({
   placeForm: { name: string; description: string };
   setPlaceForm: (form: { name: string; description: string }) => void;
   addPlace: () => void;
+  paintNpc: (npc: Npc) => void;
+  paintLocation: (location: Location) => void;
+  painting: boolean;
 }) {
-  const tabs: Array<[typeof tab, string]> = [["insight", "Insight"], ["truth", "Truth"], ["person", "Person"], ["place", "Place"]];
+  const [worldSearch, setWorldSearch] = useState("");
+  const tabs: Array<[typeof tab, string]> = [["overview", "World"], ["insight", "Insight"], ["truth", "Truth"], ["person", "People"], ["place", "Places"]];
+  const query = worldSearch.trim().toLowerCase();
+  const facts = state.worldFacts.filter((fact) => !query || `${fact.title} ${fact.category} ${fact.content}`.toLowerCase().includes(query));
+  const people = state.npcs.filter((npc) => !query || `${npc.name} ${npc.disposition} ${npc.location ?? ""} ${npc.notes}`.toLowerCase().includes(query));
+  const places = state.locations.filter((location) => !query || `${location.name} ${location.description} ${location.discovered ? "known" : "rumored"}`.toLowerCase().includes(query));
   return (
-    <Panel title="World truths" icon={<BookOpen size={17} />}>
-      <div className="world-tabs">
-        {tabs.map(([key, label]) => <button className={tab === key ? "active" : ""} key={key} onClick={() => setTab(key)}>{label}</button>)}
-      </div>
-
-      {tab === "insight" && (
-        <div className="world-editor">
-          <button className="ghost full" onClick={loadInsight}>Ask what the hearth believes</button>
-          {!insight && <p className="muted">See what the narrator is treating as important before the next scene moves.</p>}
-          {insight && (
-            <div className="insight-stack">
-              <InsightBlock title="Current read" lines={insight.believes} />
-              <InsightBlock title="Binding laws" lines={insight.worldRules} empty="No hard laws have been set." />
-              <InsightBlock title="Cast in mind" lines={insight.cast} empty="No extra faces are pulling focus." />
-              <InsightBlock title="Places in mind" lines={insight.places} empty="No places are marked yet." />
-              <InsightBlock title="Loose threads" lines={insight.unanswered} empty="No loose thread has been pinned." />
-            </div>
-          )}
+    <div className="world-bible-body">
+        <div className="world-tabs">
+          {tabs.map(([key, label]) => <button className={tab === key ? "active" : ""} key={key} onClick={() => setTab(key)}>{label}</button>)}
         </div>
-      )}
 
-      {tab === "truth" && (
-        <div className="world-editor">
-          <div className="mini-row">
-            <select value={factForm.category} onChange={(e) => setFactForm({ ...factForm, category: e.target.value as WorldFactCategory })}>
-              <option value="law">Law</option>
-              <option value="tone">Tone</option>
-              <option value="lore">Lore</option>
-              <option value="faction">Faction</option>
-              <option value="danger">Danger</option>
-              <option value="custom">Custom</option>
-            </select>
-            <input type="number" min={1} max={5} value={factForm.priority} onChange={(e) => setFactForm({ ...factForm, priority: Number(e.target.value) })} title="Narrator priority" />
+        {tab === "overview" && (
+          <div className="world-editor">
+            <input className="collection-search" value={worldSearch} onChange={(event) => setWorldSearch(event.target.value)} placeholder="Search truths, people, places..." />
+            <div className="world-counts">
+              <span>{state.worldFacts.length} truths</span>
+              <span>{state.npcs.length} people</span>
+              <span>{state.locations.length} places</span>
+            </div>
+            <div className="world-list tall">
+              {state.worldFacts.length === 0 && state.npcs.length === 0 && state.locations.length === 0 && <p className="muted">The world has not written much back yet.</p>}
+              {query && facts.length === 0 && people.length === 0 && places.length === 0 && <p className="muted">Nothing in the bible matches that search.</p>}
+              {facts.length > 0 && <WorldGroup title="Truths">{facts.map((fact) => <div className="compact-world-line" key={fact.id}><strong>{fact.title}</strong><span>{fact.category} truth / priority {fact.priority}</span><p>{fact.content}</p></div>)}</WorldGroup>}
+              {people.length > 0 && <WorldGroup title="People">{people.map((npc) => <WorldNpcLine key={npc.id} npc={npc} onPaint={paintNpc} painting={painting} />)}</WorldGroup>}
+              {places.length > 0 && <WorldGroup title="Places">{places.map((location) => <WorldLocationLine key={location.id} location={location} onPaint={paintLocation} painting={painting} />)}</WorldGroup>}
+            </div>
           </div>
-          <input value={factForm.title} onChange={(e) => setFactForm({ ...factForm, title: e.target.value })} placeholder="The king still signs decrees" />
-          <textarea value={factForm.content} onChange={(e) => setFactForm({ ...factForm, content: e.target.value })} placeholder="Write a rule, taboo, secret, faction motive, danger, or style command the narrator must respect." />
-          <button className="ghost full" onClick={addFact}>Set this truth</button>
-          {state.worldFacts.length === 0 && <p className="muted">No private laws have been written yet.</p>}
-          {state.worldFacts.map((fact) => (
-            <div className="truth-line" key={fact.id}>
-              <strong>{fact.title}</strong>
-              <span>{fact.category} / {fact.priority}</span>
-              <p>{fact.content}</p>
-              <button className="icon-button danger" title="Strike this truth" onClick={() => removeFact(fact.id)}><Trash2 size={15} /></button>
+        )}
+
+        {tab === "insight" && (
+          <div className="world-editor">
+            <button className="ghost full" onClick={loadInsight}>Ask what the hearth believes</button>
+            {!insight && <p className="muted">See what the narrator is treating as important before the next scene moves.</p>}
+            {insight && (
+              <div className="insight-stack">
+                <InsightBlock title="Current read" lines={insight.believes} />
+                <InsightBlock title="Binding laws" lines={insight.worldRules} empty="No hard laws have been set." />
+                <InsightBlock title="Cast in mind" lines={insight.cast} empty="No extra faces are pulling focus." />
+                <InsightBlock title="Places in mind" lines={insight.places} empty="No places are marked yet." />
+                <InsightBlock title="Loose threads" lines={insight.unanswered} empty="No loose thread has been pinned." />
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === "truth" && (
+          <div className="world-editor">
+            <div className="mini-row">
+              <select value={factForm.category} onChange={(e) => setFactForm({ ...factForm, category: e.target.value as WorldFactCategory })}>
+                <option value="law">Law</option>
+                <option value="tone">Tone</option>
+                <option value="lore">Lore</option>
+                <option value="faction">Faction</option>
+                <option value="danger">Danger</option>
+                <option value="custom">Custom</option>
+              </select>
+              <input type="number" min={1} max={5} value={factForm.priority} onChange={(e) => setFactForm({ ...factForm, priority: Number(e.target.value) })} title="Narrator priority" />
             </div>
-          ))}
-        </div>
-      )}
+            <input value={factForm.title} onChange={(e) => setFactForm({ ...factForm, title: e.target.value })} placeholder="The king still signs decrees" />
+            <textarea value={factForm.content} onChange={(e) => setFactForm({ ...factForm, content: e.target.value })} placeholder="Write a rule, taboo, secret, faction motive, danger, or style command the narrator must respect." />
+            <button className="ghost full" onClick={addFact}>Set this truth</button>
+            <div className="world-list">
+              {state.worldFacts.length === 0 && <p className="muted">No private laws have been written yet.</p>}
+              {state.worldFacts.map((fact) => (
+                <div className="truth-line" key={fact.id}>
+                  <strong>{fact.title}</strong>
+                  <span>{fact.category} / {fact.priority}</span>
+                  <p>{fact.content}</p>
+                  <button className="icon-button danger" title="Strike this truth" onClick={() => removeFact(fact.id)}><Trash2 size={15} /></button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
-      {tab === "person" && (
-        <div className="world-editor">
-          <input value={npcForm.name} onChange={(e) => setNpcForm({ ...npcForm, name: e.target.value })} placeholder="Name" />
-          <input value={npcForm.disposition} onChange={(e) => setNpcForm({ ...npcForm, disposition: e.target.value })} placeholder="Disposition" />
-          <input value={npcForm.location} onChange={(e) => setNpcForm({ ...npcForm, location: e.target.value })} placeholder="Where they belong" />
-          <textarea value={npcForm.notes} onChange={(e) => setNpcForm({ ...npcForm, notes: e.target.value })} placeholder="What they want, hide, fear, owe, or know." />
-          <button className="ghost full" onClick={addPerson}>Add this person</button>
-        </div>
-      )}
+        {tab === "person" && (
+          <div className="world-editor">
+            <input value={npcForm.name} onChange={(e) => setNpcForm({ ...npcForm, name: e.target.value })} placeholder="Name" />
+            <input value={npcForm.disposition} onChange={(e) => setNpcForm({ ...npcForm, disposition: e.target.value })} placeholder="Disposition" />
+            <input value={npcForm.location} onChange={(e) => setNpcForm({ ...npcForm, location: e.target.value })} placeholder="Where they belong" />
+            <textarea value={npcForm.notes} onChange={(e) => setNpcForm({ ...npcForm, notes: e.target.value })} placeholder="What they want, hide, fear, owe, or know." />
+            <button className="ghost full" onClick={addPerson}>Add this person</button>
+            <div className="world-list">
+              {state.npcs.map((npc) => <WorldNpcLine key={npc.id} npc={npc} onPaint={paintNpc} painting={painting} />)}
+            </div>
+          </div>
+        )}
 
-      {tab === "place" && (
-        <div className="world-editor">
-          <input value={placeForm.name} onChange={(e) => setPlaceForm({ ...placeForm, name: e.target.value })} placeholder="Place name" />
-          <textarea value={placeForm.description} onChange={(e) => setPlaceForm({ ...placeForm, description: e.target.value })} placeholder="Smell, sound, danger, custom, landmark, or what locals refuse to say." />
-          <button className="ghost full" onClick={addPlace}>Mark this place</button>
-        </div>
-      )}
-    </Panel>
+        {tab === "place" && (
+          <div className="world-editor">
+            <input value={placeForm.name} onChange={(e) => setPlaceForm({ ...placeForm, name: e.target.value })} placeholder="Place name" />
+            <textarea value={placeForm.description} onChange={(e) => setPlaceForm({ ...placeForm, description: e.target.value })} placeholder="Smell, sound, danger, custom, landmark, or what locals refuse to say." />
+            <button className="ghost full" onClick={addPlace}>Mark this place</button>
+            <div className="world-list">
+              {state.locations.map((location) => <WorldLocationLine key={location.id} location={location} onPaint={paintLocation} painting={painting} />)}
+            </div>
+          </div>
+        )}
+    </div>
+  );
+}
+
+function WorldGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return <div className="world-group"><div className="collection-group-title">{title}</div>{children}</div>;
+}
+
+function WorldNpcLine({ npc, onPaint, painting }: { npc: Npc; onPaint: (npc: Npc) => void; painting: boolean }) {
+  return (
+    <div className="compact-world-line with-action">
+      <div>
+        <strong>{npc.name}</strong>
+        <span>person / {npc.disposition}{npc.location ? ` / ${npc.location}` : ""}</span>
+        <p>{npc.notes}</p>
+      </div>
+      <button className="icon-button" title={`Paint ${npc.name}`} onClick={() => onPaint(npc)} disabled={painting}><Brush size={15} /></button>
+    </div>
+  );
+}
+
+function WorldLocationLine({ location, onPaint, painting }: { location: Location; onPaint: (location: Location) => void; painting: boolean }) {
+  return (
+    <div className="compact-world-line with-action">
+      <div>
+        <strong>{location.name}</strong>
+        <span>{location.discovered ? "known place" : "rumored place"}</span>
+        <p>{location.description}</p>
+      </div>
+      <button className="icon-button" title={`Paint ${location.name}`} onClick={() => onPaint(location)} disabled={painting}><Brush size={15} /></button>
+    </div>
   );
 }
 
@@ -644,45 +974,54 @@ function InsightBlock({ title, lines, empty = "Nothing here yet." }: { title: st
   );
 }
 
-function CharacterPanel({ state, portrait, painting, onHp, onRest, onPortrait }: { state: GameState; portrait?: string; painting: boolean; onHp: (delta: number) => void; onRest: () => void; onPortrait: () => void }) {
+function CharacterPanel({ state, portrait, painting, onPortrait }: { state: GameState; portrait?: string; painting: boolean; onPortrait: () => void }) {
+  const xp = xpProgress(state.character.level, state.character.xp);
+  const [abilitySearch, setAbilitySearch] = useState("");
+  const query = abilitySearch.trim().toLowerCase();
+  const abilities = state.character.spells.filter((ability) => !query || ability.toLowerCase().includes(query));
+  const groupedAbilities = abilities.reduce<Record<string, string[]>>((groups, ability) => {
+    const group = ability.includes(":") ? "Story-earned" : /spell|mark|hand|word|shield|wounds|mockery|charm|burning/i.test(ability) ? "Spells" : "Class features";
+    groups[group] = [...(groups[group] ?? []), ability];
+    return groups;
+  }, {});
   return (
     <Panel title={state.character.name} icon={<Heart size={17} />}>
       <button className="portrait-frame" onClick={onPortrait} title="Paint or repaint this face">
         {portrait ? <img src={portrait} alt={state.character.name} /> : <span><UserRound size={34} />{painting ? "Paint gathering..." : "Paint this face"}</span>}
       </button>
       <div className="identity">{state.character.ancestry} {state.character.role}</div>
+      {state.character.appearance && <p className="character-note">{state.character.appearance}</p>}
+      <div className="xp-row">
+        <div><strong>Level {state.character.level}</strong><span>{state.character.level >= 20 ? `${state.character.xp} XP` : `${state.character.xp}/${xp.next} XP`}</span></div>
+        <div className="xp-bar"><span style={{ width: `${xp.percent}%` }} /></div>
+      </div>
       <div className="hp"><span style={{ width: `${(state.character.hp / state.character.maxHp) * 100}%` }} /></div>
       <div className="hp-text">{state.character.hp}/{state.character.maxHp} HP</div>
-      <div className="hp-controls">
-        <button onClick={() => onHp(-1)}>-1</button>
-        <button onClick={() => onHp(1)}>+1</button>
-        <button onClick={onRest}>Rest</button>
-      </div>
       <StatGrid stats={state.character.stats} hp={state.character.maxHp} compact />
-      <div className="spell-list">{state.character.spells.map((spell) => <span key={spell}>{spell}</span>)}</div>
-    </Panel>
-  );
-}
-
-function DiceTray({ dice, setDice, rollDice, manualRoll }: { dice: string; setDice: (value: string) => void; rollDice: (notation?: string) => void; manualRoll: DiceRoll | null }) {
-  return (
-    <Panel title="Bone dice" icon={<Dices size={17} />}>
-      <div className="dice-presets">
-        {["d20", "d12", "d10", "d8", "d6", "d4"].map((notation) => <button key={notation} onClick={() => rollDice(notation)}>{notation}</button>)}
+      <div className="capability-title">Class features and spells</div>
+      <input className="collection-search" value={abilitySearch} onChange={(event) => setAbilitySearch(event.target.value)} placeholder="Search abilities..." />
+      <div className="ability-list">
+        {state.character.spells.length === 0 && <p className="muted">No class features are written yet.</p>}
+        {state.character.spells.length > 0 && abilities.length === 0 && <p className="muted">No ability matches that search.</p>}
+        {Object.entries(groupedAbilities).map(([group, entries]) => (
+          <div className="collection-group" key={group}>
+            <div className="collection-group-title">{group}</div>
+            <div className="spell-list">{entries.map((spell) => <span key={spell}>{spell}</span>)}</div>
+          </div>
+        ))}
       </div>
-      <div className="dice-custom">
-        <input value={dice} onChange={(e) => setDice(e.target.value)} />
-        <button className="ghost" onClick={() => rollDice()}>Cast</button>
-      </div>
-      {manualRoll && <p className="memory">Last cast: {manualRoll.total} from {manualRoll.rolls.join(", ")}</p>}
     </Panel>
   );
 }
 
 function StatGrid({ stats, hp, compact = false }: { stats: Record<AbilityKey, number>; hp: number; compact?: boolean }) {
+  const modifier = (score: number) => Math.floor((score - 10) / 2);
   return (
     <div className={compact ? "stats compact" : "stats"}>
-      {(Object.keys(stats) as AbilityKey[]).map((key) => <div className="stat" key={key}><span>{statLabels[key]}</span><strong>{stats[key]}</strong></div>)}
+      {(Object.keys(stats) as AbilityKey[]).map((key) => {
+        const mod = modifier(stats[key]);
+        return <div className="stat" key={key}><span>{statLabels[key]}</span><strong>{stats[key]}</strong><em>{mod >= 0 ? "+" : ""}{mod}</em></div>;
+      })}
       {!compact && <div className="stat"><span>HP</span><strong>{hp}</strong></div>}
     </div>
   );
