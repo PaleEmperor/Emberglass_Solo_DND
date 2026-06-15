@@ -97,6 +97,7 @@ export type Artwork = {
   campaignId: string;
   characterId?: string;
   itemId?: string;
+  messageId?: string;
   kind: "portrait" | "scene" | "item" | "npc" | "location";
   title: string;
   prompt: string;
@@ -133,5 +134,5 @@ export type AdventureResponse = {
   dmMessage: Message;
   playerMessage: Message;
   rolls: DiceRoll[];
-  llmMode: "ollama" | "mock";
+  llmMode: "ollama";
 };

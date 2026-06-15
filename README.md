@@ -1,6 +1,6 @@
 # Emberglass Local Solo DM
 
-Emberglass is a local-first solo tabletop RPG companion. It combines a React interface, an Express backend, SQLite persistence, deterministic dice/state handling, optional local LLM narration through Ollama, and optional local image generation through a Stable Diffusion WebUI-compatible API.
+Emberglass is a local-first solo tabletop RPG companion. It combines a React interface, an Express backend, SQLite persistence, deterministic dice/state handling, local LLM narration through Ollama, and optional local image generation through a Stable Diffusion WebUI-compatible API.
 
 The app is intended for private local play. It does not require accounts, hosted services, or online deployment.
 
@@ -39,9 +39,9 @@ http://127.0.0.1:8787
 
 SQLite data is stored in `data/dnd.sqlite`. Generated artwork is stored in `data/artwork`.
 
-## Optional Local Narration
+## Local Narration
 
-When Ollama is running, Emberglass uses it as the narrator. If Ollama is not reachable or returns invalid JSON, the game falls back to a built-in local mock narrator so play can continue.
+Emberglass uses Ollama for campaign creation, campaign restarts, and narration. If Ollama is not reachable or returns invalid JSON, the request fails instead of inventing a fallback response or reusing a scripted opening.
 
 Defaults:
 
@@ -83,6 +83,7 @@ If the image API is unavailable, the app creates local fallback artwork cards in
 ## Features
 
 - Prompt-based campaign creation.
+- LLM-generated campaign openings and restart openings from the current premise and character.
 - Character creation inside the chosen campaign.
 - Character portrait generation using appearance notes.
 - Natural-language player actions.
@@ -91,8 +92,8 @@ If the image API is unavailable, the app creates local fallback artwork cards in
 - DM-managed inventory, items, abilities, quests, XP, and levels.
 - Quest tracker with progress, rewards, completion state, and XP awards.
 - Searchable story log.
-- Searchable and grouped world bible for truths, NPCs, and places.
-- Manual additions for world truths, people, places, and memory notes.
+- Searchable and grouped world bible for facts, NPCs, and places.
+- Manual additions for world facts, people, places, and memory notes.
 - Narrator insight view for current world assumptions and loose threads.
 - Item detail modal with optional item artwork.
 - Optional generated art for scenes, character portraits, NPCs, locations, and items.
@@ -101,10 +102,10 @@ If the image API is unavailable, the app creates local fallback artwork cards in
 ## Architecture
 
 - `frontend/src`: React app with campaign selection, campaign creation, character creation, adventure UI, world bible, inventory, quest tracker, and art gallery.
-- `backend/src/db.ts`: SQLite schema, migrations, persistence, and seed helpers.
+- `backend/src/db.ts`: SQLite schema, migrations, and persistence.
 - `backend/src/engine.ts`: deterministic game loop, dice checks, XP progression, and validated state mutations.
-- `backend/src/llm.ts`: Ollama integration with mock fallback.
-- `backend/src/prompt.ts`: structured DM prompt using recent conversation, state, memories, world truths, NPCs, locations, inventory, and quests.
+- `backend/src/llm.ts`: Ollama integration for campaign openings and local narration.
+- `backend/src/prompt.ts`: structured DM prompt using recent conversation, state, memories, world facts, NPCs, locations, inventory, and quests.
 - `backend/src/schemas.ts`: Zod schemas for model-proposed state changes.
 - `backend/src/art.ts`: local image generation through Stable Diffusion WebUI/Forge, with saved fallback artwork.
 - `shared/types.ts`: shared TypeScript game types.
@@ -113,7 +114,7 @@ The model writes narration and proposes structured state changes. The backend va
 
 ## Troubleshooting
 
-- If the UI shows mock/fallback narration, Ollama is not reachable or the model returned invalid JSON.
+- If the UI shows the narrator as offline, Ollama is not reachable. Start Ollama and try the action again.
 - If the image forge is unavailable, artwork buttons still create local fallback cards.
 - If PowerShell blocks `npm`, use `npm.cmd`.
 - If port `5173` is busy, Vite prints an alternate frontend URL.

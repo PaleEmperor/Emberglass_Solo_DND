@@ -50,7 +50,7 @@ export function migrate() {
       title TEXT NOT NULL, content TEXT NOT NULL, priority INTEGER NOT NULL, created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS artworks (
-      id TEXT PRIMARY KEY, campaign_id TEXT NOT NULL, character_id TEXT, item_id TEXT,
+      id TEXT PRIMARY KEY, campaign_id TEXT NOT NULL, character_id TEXT, item_id TEXT, message_id TEXT,
       kind TEXT NOT NULL, title TEXT NOT NULL, prompt TEXT NOT NULL,
       image_url TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL
     );
@@ -69,6 +69,9 @@ export function migrate() {
   const artworkColumns = db.prepare(`PRAGMA table_info(artworks)`).all() as Array<{ name: string }>;
   if (!artworkColumns.some((column) => column.name === "item_id")) {
     db.prepare(`ALTER TABLE artworks ADD COLUMN item_id TEXT`).run();
+  }
+  if (!artworkColumns.some((column) => column.name === "message_id")) {
+    db.prepare(`ALTER TABLE artworks ADD COLUMN message_id TEXT`).run();
   }
 }
 
@@ -148,6 +151,7 @@ export const rowToArtwork = (row: any): Artwork => ({
   campaignId: row.campaign_id,
   characterId: row.character_id ?? undefined,
   itemId: row.item_id ?? undefined,
+  messageId: row.message_id ?? undefined,
   kind: row.kind,
   title: row.title,
   prompt: row.prompt,
@@ -192,38 +196,7 @@ export type CampaignSeed = {
   startingItems?: Array<{ name: string; quantity: number; description: string }>;
 };
 
-export function defaultCampaignSeed(character: Character, name: string, tone: string): CampaignSeed {
-  return {
-    name,
-    tone,
-    premise: `${character.name}, a ${character.ancestry} ${character.role}, has taken Mara Vell's cellar key and the first step beneath the Emberglass Tavern.`,
-    startingLocation: "Emberglass Tavern",
-    startingLocationDescription: "Low beams, wet cloaks, candle-stained tables, and a cellar older than the village ledger.",
-    openingNpcName: "Mara Vell",
-    openingNpcDisposition: "watchful ally",
-    openingNpcNotes: "Keeps the Emberglass, counts every cup poured, and hears lies before they finish leaving a mouth.",
-    questTitle: "The Door Under the Alehouse",
-    questDescription: "Something below the Emberglass has begun answering the rain with knocks of its own.",
-    questProgress: "Take Mara's key, descend past the barrels, and learn what woke under the floor.",
-    questReward: "A warm room, silver in a cloth purse, and first claim on whatever should not belong to the dead.",
-    questXpReward: 100,
-    openingMessage: `Rain ticks on the leaded windows while the last patrons pretend not to listen. You are in the common room of the Emberglass Tavern, one table from the cellar door, with your road-worn pack at your feet and Mara Vell across from you.
-
-Mara sets a blackened cellar key beside your cup and keeps two fingers on it a moment longer than needed. "Past the ale barrels," she says. "If a door is open down there, I did not open it. If something answers you, do not answer back too quickly."
-
-Three things are immediately worth your attention: the key is cold enough to bead water on the table, the floorboards below your chair knock once from underneath, and a drunk by the hearth has gone pale because he recognizes the rhythm.
-
-You can take the key and descend, question Mara about what she has already seen, press the frightened patron before he bolts, or inspect the cellar door and floorboards first.`,
-    memory: "A fresh draught slips through the cellar boards, carrying dust, wet stone, and the bite of old metal.",
-    startingItems: [
-      { name: "Weathered pack", quantity: 1, description: "Oilcloth bundle with dry socks, hard cheese, flint, twine, and a tin cup dented by long roads." },
-      { name: "Iron dagger", quantity: 1, description: "Unadorned, sharp enough, and honest in the hand." }
-    ]
-  };
-}
-
-export function createCampaign(character: Character, name: string, tone: string, seed?: Partial<CampaignSeed>): Campaign {
-  const campaignSeed = { ...defaultCampaignSeed(character, name, tone), ...seed };
+export function createCampaign(character: Character, campaignSeed: CampaignSeed): Campaign {
   const campaign: Campaign = {
     id: id("camp"),
     name: campaignSeed.name,
@@ -311,6 +284,38 @@ export function deleteCampaign(campaignId: string) {
   tx();
 }
 
+export function restartCampaign(campaignId: string, restartSeed: CampaignSeed) {
+  const state = getGameState(campaignId);
+  const backup = backupCampaign(campaignId);
+  const cleanSummary = state.campaign.summary.replace(/\s+Lately:.*$/s, "").trim() || state.campaign.summary;
+  const baseSpells = state.character.spells.filter((ability) => !ability.includes(":"));
+  const character = { ...state.character, level: 1, xp: 0, hp: state.character.maxHp, spells: baseSpells.length ? baseSpells : state.character.spells };
+  const seed = {
+    ...restartSeed
+  };
+  const tx = db.transaction(() => {
+    db.prepare(`UPDATE characters SET level = 1, xp = 0, hp = max_hp, spells = ? WHERE id = ?`).run(JSON.stringify(character.spells), state.character.id);
+    db.prepare(`UPDATE campaigns SET summary = ?, updated_at = ? WHERE id = ?`).run(seed.premise || cleanSummary, now(), campaignId);
+    db.prepare(`DELETE FROM messages WHERE campaign_id = ?`).run(campaignId);
+    db.prepare(`DELETE FROM inventory_items WHERE campaign_id = ?`).run(campaignId);
+    db.prepare(`DELETE FROM quests WHERE campaign_id = ?`).run(campaignId);
+    db.prepare(`DELETE FROM npcs WHERE campaign_id = ?`).run(campaignId);
+    db.prepare(`DELETE FROM locations WHERE campaign_id = ?`).run(campaignId);
+    db.prepare(`DELETE FROM memories WHERE campaign_id = ?`).run(campaignId);
+    db.prepare(`DELETE FROM artworks WHERE campaign_id = ? AND kind != 'portrait'`).run(campaignId);
+    for (const item of seed.startingItems ?? []) {
+      db.prepare(`INSERT INTO inventory_items VALUES (?,?,?,?,?,?)`).run(id("item"), campaignId, state.character.id, item.name, item.quantity, item.description);
+    }
+    db.prepare(`INSERT INTO quests (id,campaign_id,title,status,description,progress,reward,xp_reward) VALUES (?,?,?,?,?,?,?,?)`).run(id("quest"), campaignId, seed.questTitle, "active", seed.questDescription, seed.questProgress, seed.questReward, seed.questXpReward);
+    db.prepare(`INSERT INTO npcs VALUES (?,?,?,?,?,?)`).run(id("npc"), campaignId, seed.openingNpcName, seed.openingNpcDisposition, seed.openingNpcNotes, seed.startingLocation);
+    db.prepare(`INSERT INTO locations VALUES (?,?,?,?,?)`).run(id("loc"), campaignId, seed.startingLocation, seed.startingLocationDescription, 1);
+    db.prepare(`INSERT INTO memories VALUES (?,?,?,?,?)`).run(id("mem"), campaignId, seed.memory, 4, now());
+    addMessage(campaignId, "dm", seed.openingMessage, {});
+  });
+  tx();
+  return { state: getGameState(campaignId), backupFile: backup.file };
+}
+
 export function addMemory(campaignId: string, content: string, importance: number) {
   db.prepare(`INSERT INTO memories VALUES (?,?,?,?,?)`).run(id("mem"), campaignId, content, importance, now());
   db.prepare(`UPDATE campaigns SET updated_at = ? WHERE id = ?`).run(now(), campaignId);
@@ -355,12 +360,13 @@ export function backupCampaign(campaignId: string) {
 export function addArtwork(input: Omit<Artwork, "id" | "createdAt">): Artwork {
   const artwork: Artwork = { ...input, id: id("art"), createdAt: now() };
   db.prepare(`
-    INSERT INTO artworks (id,campaign_id,character_id,item_id,kind,title,prompt,image_url,source,created_at)
-    VALUES (@id,@campaignId,@characterId,@itemId,@kind,@title,@prompt,@imageUrl,@source,@createdAt)
+    INSERT INTO artworks (id,campaign_id,character_id,item_id,message_id,kind,title,prompt,image_url,source,created_at)
+    VALUES (@id,@campaignId,@characterId,@itemId,@messageId,@kind,@title,@prompt,@imageUrl,@source,@createdAt)
   `).run({
     ...artwork,
     characterId: artwork.characterId ?? null,
-    itemId: artwork.itemId ?? null
+    itemId: artwork.itemId ?? null,
+    messageId: artwork.messageId ?? null
   });
   db.prepare(`UPDATE campaigns SET updated_at = ? WHERE id = ?`).run(now(), artwork.campaignId);
   return artwork;

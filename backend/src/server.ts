@@ -2,14 +2,13 @@ import express from "express";
 import cors from "cors";
 import path from "node:path";
 import { z } from "zod";
-import { addLocation, addMemory, addNpc, addWorldFact, backupCampaign, createCampaign, createCharacter, deleteCampaign, deleteWorldFact, getGameState, listCampaigns, migrate, setCharacterHp, type CampaignSeed } from "./db";
-import { ensureSeedData } from "./seed";
+import { addLocation, addMemory, addNpc, addWorldFact, backupCampaign, createCampaign, createCharacter, deleteCampaign, deleteWorldFact, getGameState, listCampaigns, migrate, restartCampaign, setCharacterHp } from "./db";
 import { handleAdventureAction } from "./engine";
 import { rollNotation } from "./dice";
 import { createArtwork } from "./art";
+import { generateCampaignSeed } from "./llm";
 
 migrate();
-ensureSeedData();
 
 const app = express();
 app.use(cors());
@@ -64,7 +63,7 @@ app.get("/api/campaigns/:id/narrator-insight", (req, res) => {
     res.json({
       believes: [
         `This campaign is currently about ${state.campaign.summary}`,
-        activeQuest ? `The strongest pressure is ${activeQuest.title}: ${activeQuest.progress}` : "No active oath is pulling the story yet.",
+        activeQuest ? `Active quest: ${activeQuest.title}: ${activeQuest.progress}` : "No active quest is currently driving the scene.",
         `${state.character.name} is the center of the frame; the narrator should challenge them, not replace their choices.`
       ],
       worldRules: bindingTruths.map((fact) => `${fact.title}: ${fact.content}`),
@@ -85,6 +84,23 @@ app.post("/api/campaigns/:id/backup", (req, res) => {
     res.json(backupCampaign(req.params.id));
   } catch (error) {
     res.status(404).json({ error: error instanceof Error ? error.message : "Not found" });
+  }
+});
+
+app.post("/api/campaigns/:id/restart", async (req, res) => {
+  try {
+    const state = getGameState(req.params.id);
+    const cleanSummary = state.campaign.summary.replace(/\s+Lately:.*$/s, "").trim() || state.campaign.summary;
+    const baseSpells = state.character.spells.filter((ability) => !ability.includes(":"));
+    const seed = await generateCampaignSeed({
+      campaignName: state.campaign.name,
+      tone: state.campaign.tone,
+      premise: cleanSummary,
+      mode: "restart"
+    }, { ...state.character, spells: baseSpells.length ? baseSpells : state.character.spells });
+    res.json(restartCampaign(req.params.id, seed));
+  } catch (error) {
+    res.status(503).json({ error: error instanceof Error ? error.message : "Could not restart campaign" });
   }
 });
 
@@ -116,84 +132,25 @@ const CharacterSchema = z.object({
   spells: z.array(z.string().min(1).max(160)).max(30)
 });
 
-function seedFromPrompt(input: { campaignName: string; tone: string; premise: string }, character: ReturnType<typeof createCharacter>): Partial<CampaignSeed> {
-  const premise = input.premise.trim();
-  const lower = premise.toLowerCase();
-  const sea = /sea|ship|island|pirate|coast|harbor|storm/.test(lower);
-  const city = /city|guild|noble|court|thief|street|mask|politic/.test(lower);
-  const wild = /forest|swamp|mountain|wilderness|beast|ruin|ancient/.test(lower);
-  const start = sea ? "The Lantern Quay" : city ? "The Copper Veil Inn" : wild ? "The Moss-Gate Camp" : "The Wayside Hearth";
-  const npc = sea ? "Captain Ilyra Voss" : city ? "Vey Corren" : wild ? "Old Renn" : "Mara Vell";
-  const hook = sea
-    ? "A tide-stained chart has surfaced, and three crews have already bled over its missing corner."
-    : city
-      ? "A sealed invitation, a dead courier, and a locked balcony door have all named the same hour."
-      : wild
-        ? "Something old has shifted under root and stone, driving animals silent and travelers off the road."
-      : "A quiet place has begun keeping a secret too large for its walls.";
-  const immediateDetails = sea
-    ? ["a chart corner pinned under a wet knife", "a bell note rolling under the dock planks", "a deckhand pretending not to watch you"]
-    : city
-      ? ["a wax seal split by a thumbnail", "a balcony door latched from the wrong side", "a servant with blood on one cuff and a rehearsed smile"]
-      : wild
-        ? ["fresh claw marks crossing old wagon ruts", "a crow nailed to a milepost with red thread", "a trail of warm ash where no fire burned"]
-        : ["a locked room no one admits owning", "a name scratched under the table edge", "a stranger leaving before their cup stops steaming"];
-  const choices = sea
-    ? "You can question the dockhand, inspect the chart, follow the bell note beneath the quay, or watch which ship is preparing to leave too quickly."
-    : city
-      ? "You can read the invitation, corner the servant, inspect the balcony door, or enter the room as if you were expected."
-      : wild
-        ? "You can study the tracks, cut down the crow and inspect the thread, question Old Renn, or follow the ash before rain takes it."
-        : "You can question your patron, examine the locked room, follow the stranger, or search the table and floor before anyone cleans the room.";
-  return {
-    name: input.campaignName,
-    tone: input.tone,
-    premise: `${character.name}, a ${character.ancestry} ${character.role}, steps into ${input.campaignName}: ${premise}`,
-    startingLocation: start,
-    startingLocationDescription: sea
-      ? "Wet rope, gull cries, black water under lanternlight, and ships creaking like old bones."
-      : city
-        ? "Velvet booths, shuttered alcoves, and enough whispered bargains to warm the room."
-        : wild
-          ? "A ring of low fires at the edge of old trees, where every path looks recently watched."
-          : "A warm room at the edge of trouble, with rain at the windows and rumors under every cup.",
-    openingNpcName: npc,
-    openingNpcDisposition: "cautious patron",
-    openingNpcNotes: `${npc} knows the first true thing about the trouble, and is afraid to say it too loudly.`,
-    questTitle: sea ? "The Missing Corner" : city ? "The Hour Behind the Door" : wild ? "The Silence Under Root" : "The First Loose Thread",
-    questDescription: hook,
-    questProgress: "Learn what is true, who is lying, and why the matter has reached your hands tonight.",
-    questReward: "Coin enough for the road, a dangerous favor, and first claim on whatever truth survives.",
-    questXpReward: sea || city || wild ? 150 : 100,
-    openingMessage: `${start} holds its breath around you. This is where the campaign begins: not in summary, but in the room, with ${character.name} close enough to touch the first piece of trouble.
-
-${npc} waits until the nearest listeners turn away, then slides the problem across the table as if it might bite. "${premise}"
-
-The place gives you three hard facts before anyone asks for bravery: ${immediateDetails[0]}, ${immediateDetails[1]}, and ${immediateDetails[2]}. ${npc.split(" ")[0]} sees which one catches your eye and says, "Choose carefully. The first step will tell them what kind of person came looking."
-
-${choices}`,
-    memory: `Campaign premise: ${premise}`,
-    startingItems: [
-      { name: "Road-worn pack", quantity: 1, description: "Rations, flint, twine, chalk, a wrapped candle, and the small comforts that keep a bad night survivable." },
-      { name: "Iron dagger", quantity: 1, description: "Plain, sharp, and easy to trust." }
-    ]
-  };
-}
-
-app.post("/api/campaigns", (req, res) => {
+app.post("/api/campaigns", async (req, res) => {
   try {
     const body = z.object({
       campaignName: z.string().min(1).max(200),
       tone: z.string().min(1).max(1500),
-      premise: z.string().min(1).max(8000).optional(),
+      premise: z.string().min(1).max(8000),
       character: CharacterSchema
     }).parse(req.body);
+    const seed = await generateCampaignSeed({
+      campaignName: body.campaignName,
+      tone: body.tone,
+      premise: body.premise,
+      mode: "new"
+    }, body.character);
     const character = createCharacter(body.character);
-    const seed = body.premise ? seedFromPrompt({ campaignName: body.campaignName, tone: body.tone, premise: body.premise }, character) : undefined;
-    const campaign = createCampaign(character, body.campaignName, body.tone, seed);
+    const campaign = createCampaign(character, seed);
     res.status(201).json(getGameState(campaign.id));
   } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : "Invalid request" });
+    res.status(503).json({ error: error instanceof Error ? error.message : "Local narrator could not create the campaign" });
   }
 });
 
@@ -202,6 +159,7 @@ app.post("/api/campaigns/:id/art", async (req, res) => {
     const body = z.object({
       kind: z.enum(["portrait", "scene", "item", "npc", "location"]),
       itemId: z.string().max(120).optional(),
+      messageId: z.string().max(120).optional(),
       title: z.string().min(1).max(200).optional(),
       prompt: z.string().min(1).max(6000).optional(),
       subjectName: z.string().min(1).max(200).optional(),
@@ -211,7 +169,7 @@ app.post("/api/campaigns/:id/art", async (req, res) => {
     const artwork = await createArtwork(req.params.id, state, body);
     res.status(201).json({ artwork, state: getGameState(req.params.id) });
   } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : "Could not paint this moment" });
+    res.status(400).json({ error: error instanceof Error ? error.message : "Could not generate image" });
   }
 });
 
@@ -220,7 +178,7 @@ app.post("/api/campaigns/:id/action", async (req, res) => {
     const body = z.object({ action: z.string().min(1).max(4000) }).parse(req.body);
     res.json(await handleAdventureAction(req.params.id, body.action));
   } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : "Invalid action" });
+    res.status(503).json({ error: error instanceof Error ? error.message : "Local narrator unavailable" });
   }
 });
 
@@ -267,7 +225,7 @@ app.post("/api/campaigns/:id/world-facts", (req, res) => {
     addWorldFact(req.params.id, body.category, body.title, body.content, body.priority);
     res.status(201).json(getGameState(req.params.id));
   } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : "Could not set this truth" });
+    res.status(400).json({ error: error instanceof Error ? error.message : "Could not save fact" });
   }
 });
 
@@ -277,7 +235,7 @@ app.delete("/api/campaigns/:id/world-facts/:factId", (req, res) => {
     deleteWorldFact(req.params.id, req.params.factId);
     res.json(getGameState(req.params.id));
   } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : "Could not strike this truth" });
+    res.status(400).json({ error: error instanceof Error ? error.message : "Could not delete fact" });
   }
 });
 

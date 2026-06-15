@@ -11,6 +11,7 @@ const SD_URL = process.env.SD_WEBUI_URL ?? "http://127.0.0.1:7860";
 type ArtRequest = {
   kind: "portrait" | "scene" | "item" | "npc" | "location";
   itemId?: string;
+  messageId?: string;
   title?: string;
   prompt?: string;
   subjectName?: string;
@@ -163,7 +164,7 @@ function fallbackSvg(state: GameState, request: ArtRequest, prompt: string) {
   <text x="142" y="172" fill="#532d1d" font-family="Georgia, serif" font-size="52" font-weight="700">${escapeXml(title)}</text>
   <text x="144" y="220" fill="#7b4a2b" font-family="Georgia, serif" font-size="28">${escapeXml(subtitle)}</text>
   ${lines.map((line, index) => `<text x="146" y="${300 + index * 46}" fill="#3a281e" font-family="Georgia, serif" font-size="30">${escapeXml(line)}</text>`).join("")}
-  <text x="146" y="612" fill="#7b4a2b" font-family="Georgia, serif" font-size="22">Paint waits for the local image forge.</text>
+  <text x="146" y="612" fill="#7b4a2b" font-family="Georgia, serif" font-size="22">Local image generation is offline.</text>
 </svg>`;
   return Buffer.from(svg, "utf8");
 }
@@ -171,7 +172,7 @@ function fallbackSvg(state: GameState, request: ArtRequest, prompt: string) {
 export async function createArtwork(campaignId: string, state: GameState, request: ArtRequest): Promise<Artwork> {
   const prompt = buildArtPrompt(state, request);
   const item = request.kind === "item" ? state.inventory.find((entry) => entry.id === request.itemId) : undefined;
-  const title = request.title ?? (request.kind === "portrait" ? state.character.name : request.kind === "item" ? item?.name ?? "Inventory item" : request.kind === "npc" ? request.subjectName ?? "Known face" : request.kind === "location" ? request.subjectName ?? "Known place" : "Painted moment");
+  const title = request.title ?? (request.kind === "portrait" ? state.character.name : request.kind === "item" ? item?.name ?? "Inventory item" : request.kind === "npc" ? request.subjectName ?? "Character image" : request.kind === "location" ? request.subjectName ?? "Location image" : "Scene image");
   let source: Artwork["source"] = "sd-webui";
   let ext = "png";
   let bytes: Buffer;
@@ -188,6 +189,7 @@ export async function createArtwork(campaignId: string, state: GameState, reques
     campaignId,
     characterId: request.kind === "portrait" ? state.character.id : undefined,
     itemId: request.kind === "item" ? request.itemId : undefined,
+    messageId: request.kind === "scene" ? request.messageId : undefined,
     kind: request.kind,
     title,
     prompt,
